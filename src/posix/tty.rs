@@ -8,6 +8,7 @@ use std::ffi::CString;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
+use std::mem;
 
 use std::os::unix::prelude::*;
 
@@ -163,11 +164,11 @@ impl TTYPort {
 
 impl Drop for TTYPort {
     fn drop(&mut self) {
-        #![allow(unused_must_use)]
-        ioctl::tiocnxcl(self.fd);
-
-        unsafe {
-            libc::close(self.fd);
+        // Make sure we haven't moved ownership of the file descriptor outside
+        // with IntoRawFd
+        if self.fd > 0 {
+            let _ = ioctl::tiocnxcl(self.fd);
+            unsafe { libc::close(self.fd) };
         }
     }
 }
@@ -175,6 +176,28 @@ impl Drop for TTYPort {
 impl AsRawFd for TTYPort {
     fn as_raw_fd(&self) -> RawFd {
         self.fd
+    }
+}
+
+impl FromRawFd for TTYPort {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+
+        let termios = termios::Termios::from_fd(fd).expect("Unable to retrieve termios settings.");
+
+        TTYPort {
+            fd: fd,
+            termios: termios,
+            timeout: Duration::from_millis(100),
+        }
+    }
+}
+
+impl IntoRawFd for TTYPort {
+
+    fn into_raw_fd(self) -> RawFd {
+        // Transfer ownership & invalidate file descriptor in structure.
+        let mut _self = self;
+        mem::replace(&mut _self.fd, -1)
     }
 }
 
